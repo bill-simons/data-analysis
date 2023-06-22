@@ -1,5 +1,6 @@
 ---
-title: "2020 Vote Counts: A Simple Analysis"
+title: "2020 U.S. Presidential Election Vote Counts"
+subtitle: "A Simple Analysis"
 author: Bill Simons
 output: html_document
 date: "2023-06-17"
@@ -7,9 +8,9 @@ date: "2023-06-17"
 [Source repository](https://github.com/bill-simons/data-analysis/tree/main/2020Votes)
 
 
-## State Vote Totals for 2020 US Presidential Election
+## Introduction
 
-I have heard a couple of times recently that, in the 2020 presidential election, Trump received more votes in California than in New York and Biden received more votes in Florida than in Massachusetts. This makes sense for a close election: the most populous states will have the most votes for each of the leading candidates. Here I will make a couple of plots to show this phenomenon.
+I have heard a couple of times recently that, in the 2020 presidential election, Trump received more votes in California than in Texas. Of course, in a close election the most populous states will have the most votes for each of the leading candidates. But the bigger point is that there is a somewhat even mixture of people with different political preferences in "red states" and "blue states." While the majority in a state will control the state-level policies, it would be wise for them to keep in mind that no state is a monolith of opinion.
 
 ```{r initialization, message=FALSE, warning=FALSE, include=TRUE}
 library(tidyverse)
@@ -21,6 +22,9 @@ my_theme <- function(...) {
   theme(title=element_text(size=12))  
 }
 ```
+
+
+## Data
 Vote totals were extracted from [https://www.fec.gov/resources/cms-content/documents/2020presgeresults.pdf](https://www.fec.gov/resources/cms-content/documents/2020presgeresults.pdf) using the [Tabula](https://tabula.technology/) utility program and consolidated into a single CSV file. Votes counts for irrelevant candidates were omitted from the csv file.
 
 ```{r load_data}
@@ -39,6 +43,8 @@ votes <- votes %>%
                 TRUMP_PCT=TRUMP/TOTAL_VOTES)
 print(votes)
 ```
+
+## Data Validation
 
 First let's just do a data sanity check by taking a quick peek at it...
 
@@ -84,73 +90,175 @@ ggplot(bycandidate) +
   my_theme()
 ```
 
+## All States are "Purple": Side-by-Side State-Level Vote Counts By Candidate
 
-
-And now let's get to the original question: in which states did each candidate get the most votes, regardless of whether they won or lost the state?
+And now let's get to the original question: what is the mixture of "winning" and "losing" voters in each state?
 
 ```{r vote_counts_by_state, fig.height=10, fig.width=10}
 
-trump <- votes %>% 
-  arrange(TRUMP) %>% 
-  mutate(MILLIONS=TRUMP_MILLIONS,
-    STATE=factor(STATE,levels=unique(STATE)))  # lock-in the re-arranged order of states 
+ordered_by_vote_count <- votes %>%   
+  arrange(TOTAL_VOTES) %>% 
+  mutate(STATE=factor(STATE,levels=unique(STATE)))  # lock-in the re-arranged order of states 
 
-biden <- votes %>% 
-  arrange(BIDEN) %>% 
-  mutate(MILLIONS=BIDEN_MILLIONS,
-    STATE=factor(STATE,levels=unique(STATE))) # lock-in the re-arranged order of states
+trump <- ordered_by_vote_count %>% mutate(MILLIONS=TRUMP_MILLIONS)
+biden <- ordered_by_vote_count %>% mutate(MILLIONS=BIDEN_MILLIONS)
 
-# make sure the vote totals (millions) in each data frame are scaled to the same color value
-# Biden per-state vote totals go up to 11.11 million, Trump max is 6.0 million
-mycolorscaler <- function(x,to,from,...) {
-  scales::rescale(x,to=c(0,12),from=c(0,11.11),...)
-}
-
-# Palettes that I like with the vote share feature (not sure if it's a sequential or 
+# Palettes that I like with the vote share feature (not sure if it's a sequential or
 # diverging scale since it looks best when the mid-scale--0.5--is a separate color?)
-# 
+#
 # Purple-Green, Red-Green
 # La Jolla, RdBu
 # Oslo, BurgYl, RdGy, YlGn, OrRd, YlOrRd
 # Reds, Oranges, Purples, Greens, Purples 2, Greens 2, Blues 3, Reds 2
 # Grays, Light Grays, Teal, Burg, Red-Yellow, PuBuGn, YlOrBr
 # Cork, Vik, Mako, Blue-Red 3, Purple-Blue, PRGn, BluGrn
+mypalette <- "Red-Green"
+myrev=F
 
-myplot <- function(data,title) {
-  mypalette <- "Purple-Green"
-  myrev=F
-  bigstates = data %>% filter(MILLIONS >= 2.2)
-  labels = formatC(bigstates$MILLIONS, digits = 1, format = "f")
-  
-  myplot <- ggplot(data,height=6) + 
-      geom_col(aes(MILLIONS, STATE, fill=BIDEN_PCT),linewidth=5) + 
-      # geom_text(aes(x=MILLIONS-0.5,y=STATE,label=labels),data=bigstates,size=4) + 
-      scale_fill_gradientn(name="Biden vote share",
-                       colors=hcl.colors(n=20,palette=mypalette,rev=myrev),
-                       rescaler=mycolorscaler) +
-      scale_x_continuous(breaks=seq(0,10,2), 
-                         minor_breaks=seq(1,11,2)) +
-      coord_cartesian(xlim=c(0,11)) +
-      ggtitle(title) +  xlab("Number of Votes (millions)") +  ylab("") + 
-      theme_minimal() + 
-      theme(legend.position="none",
-            axis.text=element_text(size=11.5),
-            panel.background = element_rect(fill = "#fffff8",color="#ffffff"))
-  myplot
+###
+# Optional: lLabel bars with number of votes
+# bigstates = data %>% filter(MILLIONS >= 2.2)
+# labels = formatC(bigstates$MILLIONS, digits = 1, format = "f")
+# 
+# +geom_text(aes(x=MILLIONS-0.5,y=STATE,label=labels),data=bigstates,size=4)
+###
+
+mkplot <- function(data,xscale,candidate) {
+   newplot <-ggplot(data,height=6) + 
+     geom_col(aes(MILLIONS,STATE,fill=BIDEN_PCT), linewidth=1) +
+     xscale(breaks=c(0,2,4,6,10),minor_breaks=c(1,3,5,11)) +
+     scale_fill_gradientn(name="Biden vote share",
+                          colors=hcl.colors(n=20,palette=mypalette,rev=myrev),
+                          limits=c(0,1),
+                          breaks=c(0.25,0.5,0.75),
+                          labels=c(".25",".50",".75"))+
+     ggtitle(candidate) +
+     xlab("Millions of Votes") +  
+     ylab("") +
+     theme_minimal() +
+     theme(axis.text=element_text(size=11.5))
+
+   newplot
 }
 
-tplot <- myplot(trump,"Trump") + theme(plot.margin = margin(t=3,1,1,1, "lines"),
-                                       legend.title = element_text(size=12),
-                                       legend.text = element_text(size=10),
-                                       legend.direction = "horizontal", 
-                                       legend.position = c(0.85,1.07))
-bplot <- myplot(biden,"Biden") 
+twid=7
+bwid=11.5
 
-# using `patchwork` package to perform the plot layout here
-tplot + bplot + 
-  plot_annotation(
-    title="2020 US Presidential Election, State-Level Votes, Colored by Vote Share",
-    subtitle="California provided Trump with his most number of votes. Biden received his second-most in Florida")
+tplot <- mkplot(trump,scale_x_reverse,"TRUMP") + 
+  coord_cartesian(c(twid,0)) +
+  theme(
+        axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        plot.margin = margin(t=3,0,0,0, "lines"),
+        plot.title = element_text(hjust = 1,size=11),
+        legend.title = element_text(size=12),
+        legend.text = element_text(size=11),
+        legend.title.align = 0.5,
+        legend.direction = "horizontal",
+        legend.position = c(0.95,1.07))
+  
+  
+bplot <- mkplot(biden,scale_x_continuous,"BIDEN") +
+  theme(plot.title = element_text(hjust=0.05,size=11),
+        legend.position="none") +
+  coord_cartesian(c(0,bwid)) 
+  
+
+# using `patchwork` library to perform the plot layout here
+tplot + bplot +
+   plot_layout(widths=c(twid,bwid)) +
+   plot_annotation(
+     title="2020 U.S. Presidential Election, State-Level Votes, Colored by Candidate Vote Share",
+     subtitle="All states are purple: no matter where you live, a significant number of your neighbors vote for the \"other side\"")
 
 
 ```
+
+
+## Wasted Votes: State-Level Vote Counts Segregated By Losing Candidate
+
+It is impressive to see the sheer number of votes for each candidate in states where they lost the electoral college votes. How many voters did not have a "representative" among the electoral college electors?
+
+```{r wasted-votes, fig.height=6, fig.width=9}
+
+############################################################
+# Data
+# 
+# 
+# Congressional district votes in Nebraska and Maine which were awarded a 
+# single "losing" elector are apportioned across all the voters in the state,
+# e.g., 20% of Biden votes in Nebraska and 25% of Trump votes in 
+# Maine are not counted as wasted
+ 
+twasted = votes %>% 
+  filter(EV_WINNER=="BIDEN") %>% 
+  mutate(WASTED = TRUMP * ((ELECTORAL_VOTES - EV_TRUMP) / ELECTORAL_VOTES),
+         WASTED_MILLIONS = WASTED/1e6,
+         WASTED_FRAC = WASTED/TOTAL_VOTES) %>%
+  arrange(WASTED) %>%
+  mutate(STATE=factor(STATE,levels=unique(STATE)))
+  
+bwasted = votes %>% 
+  filter(EV_WINNER=="TRUMP") %>% 
+  mutate(WASTED = BIDEN * ((ELECTORAL_VOTES - EV_BIDEN) / ELECTORAL_VOTES),
+         WASTED_MILLIONS = WASTED/1e6,
+         WASTED_FRAC = WASTED/TOTAL_VOTES) %>%
+  arrange(WASTED) %>%
+  mutate(STATE=factor(STATE,levels=unique(STATE)))
+
+sum_bwasted <- sum(bwasted$WASTED_MILLIONS)
+sum_twasted <- sum(twasted$WASTED_MILLIONS)
+sum_all = sum(votes$TOTAL_VOTES)/1e6
+
+############################################################
+# Plots
+# 
+wvpalette = "Red-Green"
+trev=F
+brev=T
+
+wvcolorscaler <- function(x,to,from,...) {
+  scales::rescale(x,from=c(0.0,0.5),to=c(0.5,0),...)
+}
+
+
+twasted_plot = ggplot(twasted) +
+  geom_col(aes(x=WASTED_MILLIONS,y=STATE,fill=WASTED_FRAC)) +
+  coord_cartesian(c(0,6)) +
+  scale_fill_gradientn(name="Wasted Vote Share",
+                       colors=hcl.colors(n=20,palette=wvpalette,rev=trev),
+                       limits=c(0,0.5),
+                       rescaler=wvcolorscaler) +
+  xlab("Millions of Votes") +
+  ylab("") +
+  ggtitle("Wasted Votes for Trump") +
+  theme_minimal() +
+  theme(legend.position="bottom",
+        legend.title.align = 0.5,
+        axis.text = element_text(size=11),
+        plot.title = element_text(hjust=0.1,size=11))
+  
+bwasted_plot = ggplot(bwasted) +
+  geom_col(aes(x=WASTED_MILLIONS,y=STATE,fill=WASTED_FRAC)) +
+  coord_cartesian(c(0,6)) +
+  scale_fill_gradientn(name="Wasted Vote Share",
+                       colors=hcl.colors(n=20,palette=wvpalette,rev=brev),
+                       limits=c(0,0.5),
+                       rescaler=wvcolorscaler) +
+  xlab("Millions of Votes") +
+  ylab("") +
+  ggtitle("Wasted Votes for Biden") +
+  theme_minimal() +
+  theme(legend.position="bottom",
+        legend.title.align = 0.5,
+        axis.text = element_text(size=11),
+        plot.title = element_text(hjust=0.1,size=11))
+        
+# using `patchwork` library
+twasted_plot + bwasted_plot +
+  plot_annotation(
+    title="2020 U.S. Presidential Election, Voters Without a \"Representative\" Among Electoral College Electors",
+    subtitle=sprintf("A total of %0.1f million Trump and %0.1f million Biden voters had wasted votes. There were %0.1f million total votes.",sum_twasted,sum_bwasted,sum_all))
+
+```
+
