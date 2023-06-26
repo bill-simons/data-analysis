@@ -1,0 +1,655 @@
+---
+title: "ISLR2 - Resampling, Linear Model Selection, Regularization"
+runningheader: "R Code for Cross-Validation, Bootstrap, and Model Selection" # only for pdf output
+subtitle: "R Code for Cross-Validation, Bootstrap, and Model Selection" # only for html output
+author: "Bill Simons"
+date: "2023-06-13"
+output:
+  tufte::tufte_html: 
+    toc: true
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: xelatex
+  tufte::tufte_book:
+    citation_package: natbib
+    latex_engine: xelatex
+---
+
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(cache.extra = packageVersion('tufte'))
+knitr::opts_chunk$set(echo = TRUE)
+options(htmltools.dir.version = FALSE)
+```
+
+# Resampling Methods
+
+## The Validation Set
+
+`r newthought("We select a subset of the data")` to use as training data, and use the rest as test/validation data:
+
+```{r validation-set, message=FALSE}
+library(ISLR2)
+data(Auto)
+set.seed(1)
+nAuto <- nrow(Auto)
+train <- sample(nAuto,2*nAuto/3)
+test  <- (!train)
+```
+
+Here's the linear model calculated on the training data:
+
+```{r validation-set-linear-model}
+lm.fit <- lm(mpg ~ horsepower, data = Auto, subset = train)
+residuals <- (Auto$mpg - predict(lm.fit, Auto))[-train]
+mean(residuals^2)
+```
+Now let's see what the MSE for quadratic and cubic models looks like:
+
+```{r validation-set-polnomial-models}
+lm.fit2 <- lm(mpg ~ poly(horsepower,2), data=Auto, subset = train)
+mean((Auto$mpg - predict(lm.fit2, Auto))[-train]^2)
+
+lm.fit3 <- lm(mpg ~ poly(horsepower,3), data=Auto, subset = train)
+mean((Auto$mpg - predict(lm.fit3, Auto))[-train]^2)
+
+```
+It looks like the quadratic model is better than the linear model, and is on-par with the cubic one.
+
+## Leave-one-out cross-validation (LOOCV)
+
+`r newthought("The LOOCV estimate can be automatically computed")` for any generalized linear model using the `glm()` and `cv.glm()` functions.  We previously used `glm()` for logistic regression, but if we do not pass the `family="binomial"` argument then it performs linear regression, just like the `lm()` function.
+
+```{r loocv-example, message=FALSE}
+library(boot)  # for glm()
+
+glm.fit = glm(mpg ~ horsepower, data=Auto)
+cv.err <- cv.glm(Auto, glm.fit)
+print(paste(
+  "Average of the MSE for each leave-one-out iteration: ",
+            cv.err$delta))
+```
+The two numbers associated with delta are essentially the same when LOOCV is performed. When we next do k-fold CV the two numbers will differ slightly. The first is the standard CV estimate (mean-squared-residuals). The second is a bias-corrected version. On this data set, the two estimates are very similar to each other.
+
+Now lets take a look at polynomial fits up to degree 7:
+
+```{r loocv-example-for-polynomial-fits, echo=FALSE}
+cv.error <- rep(0, 7)
+for (i in 1:7) {
+  glm.fit <- glm(mpg ~ poly(horsepower, i), data = Auto)
+  cv.error[i] <- cv.glm(Auto, glm.fit)$delta[1]
+}
+```
+
+```{r, fig.margin=TRUE, fig.cap="MSE vs. Polynomial Degree From LOOCV",echo=FALSE}
+plot(1:7,cv.error,type="b")
+```
+    
+    cv.error <- rep(0, 7)
+    for (i in 1:7) {
+      glm.fit <- glm(mpg ~ poly(horsepower, i), data = Auto)
+      cv.error[i] <- cv.glm(Auto, glm.fit)$delta[1]
+    }
+    cv.error
+
+```{r, echo=FALSE}
+cv.error
+```
+
+Again, not much improvement in the MSE is seen after the polynomial degree 2 (quadratic) model.
+
+## K-fold cross validation
+
+`r newthought("The cv.glm() function can also be used")` to implement k-fold CV. Here we use k=10, a common choice for k, on the Auto data set. We once again set a random seed and initialize a vector in which we will store the CV errors corresponding to the polynomial fits of orders one to ten.
+
+```{r k-fold-cv-example}
+set.seed(17)
+cv.error.kfcv <- rep(0, 10)
+for (i in 1:10) {
+  glm.fit <- glm(mpg ~ poly(horsepower, i), data = Auto)
+  cv.error.kfcv[i] <- cv.glm(Auto, glm.fit, K = 10)$delta[1]
+}
+cv.error.kfcv
+```
+We still see little evidence that using cubic or higher-order polynomial terms leads to lower test error than simply using a quadratic fit.
+
+
+## The Bootstrap
+
+`r newthought("The bootstrap can be used to quantify")` the uncertainty associated with a given estimator or statistical learning method. In this toy example we will allocate investments in two funds using a proportion α in the first fund and (1- α) in the second fund. We wish to minimize the variance in the expected returns. If X is a random variable for the return of the first fund and Y is a random variable for the return of the second fund, then the minimum variance $Var[\alpha X + (1 - \alpha) Y]$ can be be shown to be:
+$$\alpha = \frac{\sigma_y^{2} - \sigma_{xy}}{\sigma_x^{2} + \sigma_y^{2} - 2\sigma_{xy}}$$
+where $\sigma_x^{2} = Var(X)$, $\sigma_y^{2} = Var(Y)$, and $\sigma_{xy} = Cov(X,Y)$. In our example the variances are unknown, but we have observations for X and Y values. Therefore, if we get the variances and covariance of our observations we can calculate the α value from above. The `bootstrap` procedure will tell us the standard error of our estimated α.
+
+
+The bootstrap procedure is:
+
+1) Create a large number B new sub-samples by sampling *with replacement* the original observations:
+
+        data <- data.frame(.....)   # whatever
+        n <- nrow(data)
+        B <- 1000
+        samples = rep(NA,B)
+        for i in 1:B:
+            samples[i] = sample(data,n,replace=TRUE)
+1) Calculate a statistic on each sub-sample: $\phi_{r}$ = some_stat($B_r$)
+1) Standard error of the statistic is estimated by
+\[
+\overline{\phi} = \frac{1}{B}\sum_{r=1}^B{\hat{\phi_{r}}}
+\]
+
+\[
+SE_B({\hat{\phi}}) = \sqrt{(\frac{1}{B-1})\sum_{r=1}^B ( {\hat{\phi}_r - \overline{\phi}}} )^2 
+\]
+
+One of the great advantages of the bootstrap approach is that it can be applied in almost all situations. No complicated mathematical calculations are required. Performing a bootstrap analysis in R entails only two steps. First, we must create a function that computes the statistic of interest. Second, we use the `boot()` function, which is part of the `boot` library, to perform the bootstrap by repeatedly sampling observations from the data set with replacement.      
+
+Here is our statistic for the toy investment allocation problem:
+
+```{r bootstrap-toy-problem-statistic}
+alpha.fn <- function(data, bIndices) {
+  X <- data$X[bIndices]
+  Y <- data$Y[bIndices]
+  (var(Y) - cov(X, Y)) / (var(X) + var(Y) - 2 * cov(X, Y))
+}
+```
+
+And the bootstrap performed on a generated data set of our `X` and `Y` investment returns:
+
+```{r bootstrap-single-example, message=FALSE}
+library(boot)
+data(Portfolio)
+
+# Calculate alpha statistic for just a single random bootstrap sample
+set.seed(7)
+b.sample = sample(nrow(Portfolio),nrow(Portfolio),replace=TRUE)
+alpha.fn(Portfolio, b.sample)
+```
+For the full bootstrap we will calculate the α statistic using the original data and calculate the standard error of the statistic found from one-thousand random bootstrap samples:
+
+```{r bootstrap-example}
+bresult <- boot(Portfolio, alpha.fn, R=1000)
+bresult
+```
+```{r bootstrap-plot, fig.margin=TRUE, fig.cap="Plot of boot() for toy investment allocation α"}
+plot(bresult)
+```
+
+The final output shows that using the original data, $\hat{\alpha} = 0.5758$, and that the bootstrap estimate for $SE(\hat{\alpha}) = 0.0897$
+
+Now we will use the bootstrap approach again to assess the variability of the estimates for β0 and β1, the intercept and slope terms for the linear regression model that uses horsepower to predict mpg in the Auto data set. We will compare the estimates obtained using the bootstrap to those obtained using the formulas for SE(β0) and SE(β1).
+
+```{r bootstrap-second-example}
+autolm.coef <- function(data, bIndices) {
+  model <- lm(mpg ~ horsepower, data = data, subset = bIndices)
+  coef(model)
+}
+
+# coefficients for the full data set
+autolm.coef(Auto, seq(1,nrow(Auto)))
+
+# try a single bootstrap sample
+b.sample <- sample(nrow(Auto),nrow(Auto),replace=TRUE)
+autolm.coef(Auto,b.sample)
+
+# now do a few thousand bootstrap samples to calculate
+#  the standard error of the coefficient estimates
+bresult <- boot(Auto, autolm.coef, R=2500)
+bresult
+```
+```{r bootstrap-plot2, fig.margin=TRUE, fig.cap="Plot of boot() for Auto lm(mpg ~ horsepower)"}
+plot(bresult)
+```
+
+```{r real-se-estimates-compared-to-bootstrap}
+summary(lm(mpg ~ horsepower, data = Auto))$coef
+```
+
+The bootstrap estimates of the standard errors are SE(β0) = 0.84 and SE(β1) = 0.0073. Compare these to the standard errors calculated directly, where  SE(β0) = 0.72 and SE(β1) = 0.0064.  Does this indicate a problem with the bootstrap? In fact, it suggests the opposite. The standard formulas assume that $\sigma^2$ is well-approximated by normally distributed residuals (MSE). The direct formulas for the standard error do not rely on the linear model being correct, but the estimate for $\sigma^2$ does. 
+
+In the `Auto` data set there actually is a  non-linear relationship betweem mpg and horsepower, and so the residuals from a linear fit will be inflated and so will $\sigma^2$. Secondly, the standard formulas assume (somewhat unrealistically) that the $x_i$ are fixed, and all the variability comes from the variation in $\epsilon_i$. The bootstrap approach does not rely on any of these assumptions, and so it is likely giving a more accurate estimate of the standard errors of β0 and β1 than is the summary() function.
+
+
+# Model Selection
+
+## Best Subset Method
+
+`r newthought('Useful up to a maximum')` of about 10-20 predictors
+
+The `regsubsets()` function (part of the `leaps` library) performs best subset selection by identifying the best model that contains a given number of predictors, where best is quantified using RSS. The syntax is the same as for `lm()`. The `summary()` command outputs the best set of variables for each model size. By default, `regsubsets()` only reports results up to the best eight-variable model, but the `nvmax` option can be used in order to return as many variables as are desired. An asterisk indicates that a given variable is included in the corresponding model. 
+
+    require(leaps)
+    require(ISLR2)
+    data(Hitters)
+    regfit.full <- regsubsets(Salary ~ ., data = Hitters, nvmax = 19)
+    reg.summary <- summary(regfit.full)
+
+
+The `summary()` function returns R2, RSS, adjusted R2, Cp, and BIC. We can examine these to try to select the best overall model.
+
+    names(reg.summary)
+    ## [1] "which"  "rsq"    "rss"    "adjr2"  "cp"     "bic"    "outmat" "obj"
+
+
+```{r model_fit_graphs, fig.margin=TRUE, fig.height=7, fig.cap="Model Error vs. Model Size", echo=FALSE}
+library(leaps)
+library(ISLR2)
+data(Hitters)
+regfit.full <- regsubsets(Salary ~ ., data = Hitters, nvmax = 19)
+reg.summary <- summary(regfit.full)
+par(mfrow = c(2, 2))
+plot(reg.summary$rss, xlab = "Number of Variables", ylab = "RSS", type = "l")
+points(1:19, reg.summary$rss, col = "red", cex=1, pch = 20)
+
+plot(reg.summary$adjr2, xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+points(1:19, reg.summary$adjr2, col = "red", cex=1, pch = 20)
+
+plot(reg.summary$cp, xlab = "Number of Variables", ylab = "Cp", type = "l")
+points(1:19, reg.summary$cp, col = "red", cex=1, pch = 20)
+
+plot(reg.summary$bic, xlab = "Number of Variables", ylab = "BIC", type = "l")
+points(1:19, reg.summary$bic, col = "red", cex=1, pch = 20)
+```    
+
+Plotting RSS, adjusted R<sup>2</sup>, Cp, and BIC for all of the models at once will help us decide which model to select. Note the type = "l" option tells R to connect the plotted points with lines.
+
+    par(mfrow = c(2, 2))
+    plot(reg.summary$rss, 
+        xlab = "Number of Variables", ylab = "RSS", type = "l")
+    plot(reg.summary$adjr2, 
+        xlab = "Number of Variables", ylab = "Adjusted RSq", type = "l")
+    plot(reg.summary$cp, 
+        xlab = "Number of Variables", ylab = "Cp", type = "l")
+    plot(reg.summary$bic, 
+        xlab = "Number of Variables", ylab = "BIC", type = "l")
+
+
+The `regsubsets()` function has a built-in `plot()` command which can be used to display the selected variables for the best model with a given number of predictors, ranked according to the **BIC**, **Cp**, **adjusted R<sup>2</sup>**, or **AIC**. To find out more about this function, type `?plot.regsubsets`. The models are ordered by the specified model selection statistic. This plot is particularly useful when there are more than ten or so models and the simple table produced by summary.regsubsets is too big to read.
+
+```{r model_rank_plots, fig.height=3}
+par(mfrow=c(1,3))
+plot(regfit.full, scale = "adjr2")
+plot(regfit.full, scale = "Cp")
+plot(regfit.full, scale = "bic")
+```
+
+We can use the `coef()` function to see the coefficient estimates associated with the best model. This is the one with six predictors under the BIC statistic (the top model in the BIC plot--the one on top--has six-predictors):
+
+```{r model_params, fig.margin=TRUE}
+coef(regfit.full, 6)
+```
+
+## Forward and Backward Stepwise Selection
+
+`r newthought('We can also use the')` `regsubsets()` function to perform forward stepwise or backward stepwise selection, using the argument `method="forward"` or `method="backward"`.
+
+
+    regfit.fwd <- regsubsets(Salary ~ ., data = Hitters,
+        nvmax = 19, method = "forward")
+    regfit.fwd.summary <- summary(regfit.fwd)
+    
+    regfit.bwd <- regsubsets(Salary ~ ., data = Hitters,
+        nvmax = 19, method = "backward")
+    regfit.bwd.summary <- summary(regfit.fwd)
+    
+```{marginfigure, echo=TRUE}
+**Validation Set: TRUE,FALSE Vector**
+
+`set.seed(1)`
+
+`train <- sample(`
+
+&nbsp;&nbsp;&nbsp;`c(TRUE, FALSE), nrow(Hitters),`
+
+&nbsp;&nbsp;&nbsp;`replace = TRUE)`
+
+`test = (!train)`
+```
+
+```{marginfigure, echo=TRUE}
+**Validation Set, Observation Indices**
+
+`set.seed(1)`
+
+`train <- sample(`
+
+&nbsp;&nbsp;&nbsp;`1:nrow(x), nrow(x) / 2)`
+
+`test <- (-train)`
+```
+
+
+
+```{marginfigure, echo=TRUE}
+**K-Folds**
+
+`set.seed(1)`
+
+`k <- 10`
+
+`n <- nrow(Hitters)`
+
+`folds <- sample(`
+
+&nbsp;&nbsp;&nbsp;`rep(1:k,length = n))`
+```    
+
+Rather than selecting the best model with the fit statistics (adjusted **R<sup>2</sup>**, **Cp**, or **BIC**) we will now use the cross-validation approach to select the best model. In order for these re-sampling approaches to yield accurate estimates of the test error, **we must use only the training observations** to perform all aspects of model-fitting—including variable selection.
+
+In cross-validation we first must separate our data into training and test subsets. See sidebar for code to create validation set or k-fold selection auxiliary vectors.  For k-fold cross-validation we will apply `regsubsets()` to the selected folds, training on all of the folds that are not the validation/test fold:
+
+```{r kfold-cv-setup, echo=FALSE, message=FALSE}
+set.seed(1)
+k <- 10
+n <- nrow(Hitters)
+folds <- sample(rep(1:k, length = n))
+
+library(tidyverse)
+```
+
+
+```{r stepwise-with-kfoldCV}
+cv.errors <- matrix(NA, k, 19, dimnames = list(NULL, paste(1:19)))
+for (j in 1:k) {
+  training_data = as_tibble(Hitters[folds != j, ]) %>% drop_na()
+  test_data = as_tibble(Hitters[folds == j, ]) %>% drop_na()
+
+  # Fit the folds that are not in the test/validation fold
+  best.fit <- regsubsets(Salary ~ ., data = training_data, 
+      nvmax = 19, method="forward")
+      
+  # Calculate MSE for each model, each with with 1 to 19 predictors selected
+  for (i in 1:19) {
+    coefi <- coef(best.fit, id = i)
+    xvars <- names(coefi)
+
+    form <- as.formula(best.fit$call[[2]])
+    mat <- model.matrix(form, test_data)
+    predictions <- mat[, xvars] %*% coefi
+
+    actuals <- test_data$Salary
+    cv.errors[j, i] <- mean((actuals - predictions)^2)
+   }
+}
+
+```
+ 
+The `model.matrix()` function is used in many regression packages for building an **`X`** matrix from the data frame^[Note that `model.matrix()` excludes NA values from the returned matrix. Make sure to `drop_na()` from the test data or else, when there are NAs in the data, the number of predictions will not match the length of the actual values vector]. We run a loop and for each fold we:
+
+* extract the coefficients from the  `best.fit` for a model with a given number of predictor variables `i`
+* multiply the `test_data` **X** model.matrix by the coefficients to get the predicted values^[Note that `%*%` is the R operator for matrix multiplication. The `*` operator performs element-by-element multiplication.]
+* subtract the actual response variable value from the predicted value, square the difference, and compute the mean
+
+The cv.errors matrix will contain `k` rows for each of the k folds and, here, 19 columns for each model with the corresponding number of predictor coefficients.  The column with the lowest average MSE error--or a column with a similar error, but fewer coefficients--is chosen as the best model.
+
+```{r plot-average-errors, fig.margin=TRUE, fig.cap="CV Error for Various Model Sizes"}
+avgerr = vector("numeric",19)  # can also use rep(NA, 19)
+for(i in 1:19) { 
+   avgerr[i] = mean(cv.errors[,i])
+}
+
+##############################################
+# single-line alternative to the code above
+mean.cv.errors = apply(cv.errors,2,mean)  
+##############################################
+
+plot(1:19,avgerr,type="l",
+     xlab = "Number of Variables",ylab="MSE (average of all the test folds)")
+points(1:19, avgerr, col = "red", cex=1, pch = 20)
+```
+## Ridge Regression and the Lasso
+
+`r newthought("The glmnet package provides")` the `glmnet` function for performing shrinkage model fitting methods. This function has slightly different syntax from other model fitting functions. It takes as arguments an **X** `model.matrix`^[Note that `model.matrix()` also automatically transforms any qualitative variables into dummy variables] and a vector of **y** response variable values. The `glmnet()` function has an `alpha` argument that determines what type of model is fit. If `alpha=0` then a ridge regression model is fit, and if `alpha=1` then a lasso model is fit.
+
+By default the `glmnet()` function performs ridge regression for an automatically selected range of λ values. However, here we have chosen to implement the function over a grid of values ranging from λ=10<sup>10</sup> to λ=10<sup>−2</sup>, essentially covering the full range of scenarios from the null model containing only the intercept, to the least squares fit. 
+
+
+```{r glm-setup, message=F}
+library(glmnet)
+
+# Remove NA values from Hitters
+Hitters  <- na.omit(Hitters)
+
+# Get X matrix and y vector
+x <- model.matrix(Salary ~ ., Hitters)[, -1]
+y <- Hitters$Salary
+
+grid <- 10^seq(10, -2, length = 100)
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = grid)
+
+```
+
+
+Note that by default, the `glmnet()` function standardizes the variables so that they are on the same scale. To turn off this default setting, use the argument standardize = FALSE.
+
+Associated with each value of λ is a vector of ridge regression coefficients, stored in a matrix that can be accessed by coef(). In this case, it is a 20×100 matrix, with 20 rows (one for each predictor, plus an intercept) and 100
+ columns (one for each value of λ). Here is part of it:
+
+```{r echo-ridge-regression-coefficients} 
+coef(ridge.mod)[1:5,c(11,51,91)]
+```
+
+
+We expect the coefficient estimates to be much smaller, in terms of ℓ2 norm, when a large value of λ is used, as compared to when a small value of λ is used. These are the coefficients when λ=11,498, along with their ℓ2 norm:
+
+```{marginfigure, echo=TRUE}
+λ = 11498
+
+L2 norm coef = 6.3606
+```
+
+```{marginfigure, echo=TRUE}
+λ = 705
+
+L2 norm coef = 57.1100
+```
+
+    λ = round(ridge.mod$lambda[50])
+    L2 norm coef = sqrt(sum(coef(ridge.mod)[-1, 50]^2)))
+
+    λ = round(ridge.mod$lambda[60])
+    L2 norm coef = sqrt(sum(coef(ridge.mod)[-1, 60]^2)))
+
+
+We can use the predict() function for a number of purposes. For example we can compute model fits for a particular value of λ that is not one of the original grid values, say for λ = 50:
+
+```{r ridge-compute-for-new-lambda}
+pval = predict(ridge.mod, s = 50, type = "coefficients")
+pval[1:5,]
+```
+
+Now lets do a Lasso regression. Instead of specifying a grid of lambda values we can use the cross-validation function build-in to the `cv.glmnet()` function By default, the function performs ten-fold cross-validation, though this can be changed using the argument nfolds
+
+```{r lasso-example}
+# set seed so results are reproducible
+set.seed(1)
+
+# alpha=1 for Lasso regularization
+lasso.cv <- cv.glmnet(x, y, alpha = 1)
+plot(lasso.cv)
+bestlambda <- lasso.cv$lambda.min
+bestlambda
+```
+
+Remember, a very high lambda corresponds to the model with only the y-intercept as its single parameter. A lambda of zero corresponds to the ordinary least squares regression model.
+
+Here's a lasso fit on a manually selected range of λ values fit on a training set with half the data:
+
+```{marginfigure, echo=TRUE}
+Each curve corresponds to a variable. It shows the path of its coefficient against the ℓ1-norm of the whole coefficient vector as λ varies. The axis above indicates the number of nonzero coefficients at the current λ, which is the effective degrees of freedom (df) for the lasso. Users may also wish to annotate the curves: this can be done by setting label = TRUE in the plot command.
+```
+
+
+```{r lasso-full-lambda-grid, warning=FALSE}
+set.seed(1)
+train <- sample(1:nrow(x), nrow(x) / 2)
+test <- (-train)
+
+lasso.mod <- glmnet(x[train, ], y[train], alpha = 1,
+    lambda = grid)
+plot(lasso.mod, label=TRUE)
+
+```
+
+We can see from the coefficient plot that depending on the choice of tuning parameter, some of the coefficients will be exactly equal to zero. We now perform cross-validation and compute the associated test error.
+
+```{r lasso-cross-validation, fig.margin=TRUE, fig.cap="CV Error for Lasso at various lambda values"}
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train], alpha = 1)
+plot(cv.out)
+```
+
+Now directly calculate the test error using the coefficients from the best model λ and compare it to the ordinary linear regression model's MSE and show the coefficients of the best model.  Note how many of the coefficients are zero. Unlike ridge regression, lasso is able to shrink coefficients to zero.
+
+```{marginfigure, echo=TRUE}
+`MSEols   = 166576.528`
+
+`MSElasso = 143673.618`
+
+`λ = 9.2869`
+```
+
+```{r lasso-best-lambda}
+
+y.test = y[test]
+# s=0 removes the penalty for model coefficients' norm
+# i.e., makes it an ordinary least-squares regression
+lm.model  <- predict(lasso.mod, s = 0, newx = x[test, ])
+MSEols  <- mean((lm.model - y.test)^2)
+
+bestlam <- cv.out$lambda.min
+lasso.pred <- predict(lasso.mod, s = bestlam,
+    newx = x[test, ])
+MSElasso <- mean((lasso.pred - y.test)^2)
+
+lasso.coef <- predict(lasso.mod, type = "coefficients",
+    s = bestlam)[1:20, ]
+lasso.coef[lasso.coef != 0.0]
+```
+
+## Principal Components Regression
+
+`r newthought('Principal components regression (PCR)')` can be performed using the `pcr()` function, which is part of the `pls` library. 
+
+PCR finds the linear combination of normalized predictors that has the highest variance. The first principle component has the highest variance, the second component has the next largest variance subject to being uncorrelated with the first.  Principle component analysis is unsupervised: the response variable is not considered at all.
+
+The idea is that we probably collected measures of "things that matter." By selecting the linear transform that maximizes variance we have a better range over which to model the y-versus-z (z are transformed x values) regression line/plane/hyperplane.
+
+We can use cross-validation to select how many principle components to use in the model. We now apply PCR to the Hitters data, in order to predict Salary (remember to remove NA value)
+
+```{r pcr-example, message=FALSE}
+library(pls)
+
+set.seed(2)
+pcr.fit <- pcr(Salary ~ ., data = Hitters, scale = TRUE,
+    validation = "CV")
+
+```
+
+The syntax for the `pcr()` function is similar to that for `lm()`, with a few additional options. Setting `scale = TRUE` has the effect of standardizing each predictor, using (equation 6.6 from the book) so that the scale on which each variable is measured will not have an effect. Setting validation = "CV" causes `pcr()` to compute the ten-fold cross-validation error for each possible value of M, the number of principal components used. The resulting fit can be examined using summary().
+
+```{r pcr-summary}
+summary(pcr.fit)
+```
+    
+    
+The CV score is provided for each possible number of components, ranging from M=0 onwards. (We have printed the CV output only up to M=4.) Note that `pcr()` reports the root mean squared error; in order to obtain the usual MSE, we must square this quantity. For instance, a root mean squared error of 352.8 corresponds to an MSE of 352.8 = 124468.
+
+
+The `summary()` function also provides the percentage of variance explained in the predictors and in the response using different numbers of components. This concept is discussed in greater detail in Chapter 12. Briefly, we can think of this as the amount of information about the predictors or the response that is captured using M  principal components. For example, setting M=1 only captures 38.31% of all the variance, or information, in the predictors. In contrast, using M=5 increases the value to 84.29%. If we were to use all M=p=19 components, this would increase to 100%.
+
+One can also plot the cross-validation scores using the validationplot() function. Using val.type = "MSEP" will cause the cross-validation MSE to be plotted.
+
+```{r pcr-validation-plot}
+validationplot(pcr.fit, val.type = "MSEP")    
+```
+
+We see that the smallest cross-validation error occurs when M=18 components are used. This is barely fewer than M=19, which amounts to simply performing least squares, because when all of the components are used in PCR no dimension reduction occurs. However, from the plot we also see that the cross-validation error is roughly the same when only one component is included in the model. This suggests that a model that uses just a small number of components might suffice.
+
+
+We now perform PCR on the training data and evaluate its test set performance.
+
+```{r pcr-train}
+set.seed(1)
+pcr.fit <- pcr(Salary ~ ., data = Hitters, subset = train,
+    scale = TRUE, validation = "CV")
+validationplot(pcr.fit, val.type = "MSEP")
+```
+
+Now we find that the lowest cross-validation error occurs when M=5 components are used. We compute the test MSE as follows.
+
+```{r pcr-test-fit}
+pcr.pred <- predict(pcr.fit, x[test, ], ncomp = 5)
+mean((pcr.pred - y.test)^2)
+```
+
+This test set MSE is competitive with the results obtained using ridge regression and the lasso. However, as a result of the way PCR is implemented, the final model is more difficult to interpret because it does not perform any kind of variable selection or even directly produce coefficient estimates.
+
+Finally, we fit PCR on the full data set, using M=5, the number of components identified by cross-validation.
+
+```{r pcr-full-data}
+pcr.fit <- pcr(y ~ x, scale = TRUE, ncomp = 5)
+summary(pcr.fit)
+```
+
+## Partial Least Squares
+
+`r newthought("PLS attempts to find linear combinations (direction vectors) ")` in the feature values that help to explain both the response and the predictors. 
+
+1) Normalize predictor values
+1) Do p single-variable regression models of each x<sub>i</sub> onto y to get estimated coefficients for each predictor. These coefficients are proportional to the correction between x<sub>i</sub> and y.
+1) Hence, in computing 
+    $$z = \sum_{j=1}^{p} \phi_{ij} x_j$$
+PLS places the highest weight on the variables that are most strongly related to the response.
+1) Subsequent directions are found by taking the residuals and then repeating the procedure.
+
+In practice PLS does not often beat simple regression or shrinkage methods like ridge regression or even principle component regression.  
+
+We implement partial least squares (PLS) using the `plsr()` function, also in the `pls` library. The syntax is just like that of the `pcr()` function.
+
+```{r pls-train}
+set.seed(1)
+pls.fit <- plsr(Salary ~ ., data = Hitters,
+                subset = train,
+                scale = TRUE,
+                validation = "CV")
+summary(pls.fit)
+validationplot(pls.fit, val.type = "MSEP")
+```
+
+The lowest cross-validation error occurs when only M=1 partial least squares directions are used. We now evaluate the corresponding test set MSE.
+
+```{r pls-test-mse}
+pls.pred <- predict(pls.fit, x[test, ], ncomp = 1)
+mean((pls.pred - y.test)^2)
+```
+
+The test MSE is comparable to, but slightly higher than, the test MSE obtained using ridge regression, the lasso, and PCR.
+
+Finally, we perform PLS using the full data set, using M=1, the number of components identified by cross-validation.
+
+```{r pls-alldata}
+pls.fit <- plsr(Salary ~ ., data = Hitters, 
+                scale = TRUE,
+                ncomp = 1)
+summary(pls.fit)
+```
+
+
+Notice that the percentage of variance in Salary that the one-component PLS fit explains, 43.05%, is almost as much as that explained using the final five-component model PCR fit, 44.90%. This is because PCR only attempts to maximize the amount of variance explained in the predictors, while PLS searches for directions that explain variance in both the predictors and the response.
+
+```{r, echo=FALSE}
+#YML header fields
+# bibliography: skeleton.bib
+# link-citations: yes
+# date: "`r Sys.Date()`"
+# 
+#Code chunk for end of file
+# ```{r bib, include=FALSE}
+# # create a bib file for the R packages used in this document
+# knitr::write_bib(c('base', 'rmarkdown'), file = 'skeleton.bib')
+# ```
+# 
+```  
+
